@@ -303,7 +303,21 @@ io.on('connection', (socket) => {
     socket.to(currentRoomId).emit('file-switched', { fileName: payload.fileName });
   });
 
+  // ── Cursor Update ────────────────────────────────────────────
+  // Ephemeral — broadcast to others only, never persisted.
+  // Client throttles emissions to ~50ms; server is just a relay.
+  socket.on('cursor-update', (payload: {
+    fileName: string;
+    position: { lineNumber: number; column: number };
+    selection: { startLineNumber: number; startColumn: number; endLineNumber: number; endColumn: number } | null;
+  }) => {
+    if (!currentRoomId) return;
+    // Attach the sender's socketId so receivers know whose cursor this is
+    socket.to(currentRoomId).emit('cursor-update', { socketId: socket.id, ...payload });
+  });
+
   // ── Disconnect ───────────────────────────────────────────────
+
   socket.on('disconnect', () => {
     if (!currentRoomId) return;
     const room = rooms.get(currentRoomId);
