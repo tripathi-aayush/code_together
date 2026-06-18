@@ -43,6 +43,16 @@ interface RoomUser {
   color: string; // HSL color string, computed client-side from name hash
 }
 
+/** A single activity log entry (identical shape on client and server). */
+export interface ActivityEntry {
+  id: string;
+  userName: string;
+  color: string;
+  action: string;   // "joined the room" | "left the room" | "created" | "deleted" | "renamed …→…" | "edited"
+  target?: string;  // file name if applicable
+  timestamp: string; // ISO string
+}
+
 interface RoomState {
   files: Map<string, string>;   // fileName → content
   activeFile: string;           // DESIGN DECISION: shared active file model.
@@ -51,6 +61,12 @@ interface RoomState {
                                 // Simpler than per-user active file; feels like true pair-programming.
   users: Map<string, RoomUser>; // socketId → user
   dbSyncTimer: ReturnType<typeof setTimeout> | null;
+  /** Circular buffer of last 100 activity entries — delivered to new joiners. */
+  activityLog: ActivityEntry[];
+  /** Debounce timer for "X edited Y" — prevents a log entry per keystroke. */
+  editActivityTimer: ReturnType<typeof setTimeout> | null;
+  /** Info for the pending debounced edit entry. */
+  lastEditInfo: { userName: string; color: string; fileName: string } | null;
 }
 
 const DEFAULT_FILE_NAME = 'main.js';
@@ -64,7 +80,9 @@ function greet(name) {
 console.log(greet('World'));
 `;
 
-const DB_SYNC_DEBOUNCE_MS = 3000; // Debounce DB saves — don't hit DB on every keystroke
+const DB_SYNC_DEBOUNCE_MS = 3000;  // Debounce DB saves — don't hit DB on every keystroke
+const EDIT_LOG_DEBOUNCE_MS = 2000; // One "edited" log entry per 2-second burst of keystrokes
+const ACTIVITY_BUFFER_SIZE = 100;  // Max entries kept in memory per room
 
 // ─── In-memory rooms ──────────────────────────────────────────
 
@@ -78,28 +96,49 @@ function createDefaultRoom(): RoomState {
     activeFile: DEFAULT_FILE_NAME,
     users: new Map(),
     dbSyncTimer: null,
+    activityLog: [],
+    editActivityTimer: null,
+    lastEditInfo: null,
   };
 }
 
-// ─── DB helpers (all wrapped in try-catch — app works without DB) ─
+// ─── DB helpers ───────────────────────────────────────────────
 
 async function loadRoomFromDB(roomCode: string): Promise<RoomState | null> {
   if (!prisma) return null;
   try {
     const dbRoom = await prisma.room.findUnique({
       where: { code: roomCode },
-      include: { files: { orderBy: { createdAt: 'asc' } } },
+      include: {
+        files: { orderBy: { createdAt: 'asc' } },
+        activityLog: { orderBy: { timestamp: 'asc' }, take: ACTIVITY_BUFFER_SIZE },
+      },
     });
     if (!dbRoom || dbRoom.files.length === 0) return null;
 
     const files = new Map<string, string>();
-    for (const f of dbRoom.files) {
-      files.set(f.name, f.content);
-    }
-    const activeFile = dbRoom.files[0].name;
+    for (const f of dbRoom.files) files.set(f.name, f.content);
 
-    console.log(`[DB] Loaded room ${roomCode} from DB (${files.size} files)`);
-    return { files, activeFile, users: new Map(), dbSyncTimer: null };
+    // Restore the in-memory activity buffer from DB
+    const activityLog: ActivityEntry[] = dbRoom.activityLog.map((e) => ({
+      id: e.id,
+      userName: e.userName,
+      color: '#9090a8', // color not stored in DB — use a neutral fallback
+      action: e.action,
+      target: e.target ?? undefined,
+      timestamp: e.timestamp.toISOString(),
+    }));
+
+    console.log(`[DB] Loaded room ${roomCode} from DB (${files.size} files, ${activityLog.length} log entries)`);
+    return {
+      files,
+      activeFile: dbRoom.files[0].name,
+      users: new Map(),
+      dbSyncTimer: null,
+      activityLog,
+      editActivityTimer: null,
+      lastEditInfo: null,
+    };
   } catch (err) {
     console.warn('[DB] Could not load room (DB may be unavailable):', (err as Error).message);
     return null;
@@ -109,14 +148,12 @@ async function loadRoomFromDB(roomCode: string): Promise<RoomState | null> {
 async function saveRoomToDB(roomCode: string, room: RoomState): Promise<void> {
   if (!prisma) return;
   try {
-    // Upsert the Room record
     const dbRoom = await prisma.room.upsert({
       where: { code: roomCode },
       create: { code: roomCode },
       update: { updatedAt: new Date() },
     });
 
-    // Upsert each file
     for (const [name, content] of room.files) {
       await prisma.file.upsert({
         where: { roomId_name: { roomId: dbRoom.id, name } },
@@ -125,7 +162,6 @@ async function saveRoomToDB(roomCode: string, room: RoomState): Promise<void> {
       });
     }
 
-    // Delete files no longer in memory
     const fileNames = Array.from(room.files.keys());
     await prisma.file.deleteMany({
       where: { roomId: dbRoom.id, name: { notIn: fileNames } },
@@ -149,18 +185,84 @@ async function getOrCreateRoom(roomCode: string): Promise<RoomState> {
   const existing = rooms.get(roomCode);
   if (existing) return existing;
 
-  // Try loading from DB first (handles server restart case)
   const fromDB = await loadRoomFromDB(roomCode);
   if (fromDB) {
     rooms.set(roomCode, fromDB);
     return fromDB;
   }
 
-  // Brand new room
   const newRoom = createDefaultRoom();
   rooms.set(roomCode, newRoom);
   console.log(`[Room] Created new room: ${roomCode}`);
   return newRoom;
+}
+
+// ─── Activity Logging ─────────────────────────────────────────
+
+/**
+ * Append an activity entry to the room's in-memory buffer, broadcast it to all
+ * connected clients, and persist it to the DB asynchronously.
+ */
+async function logActivity(
+  roomId: string,
+  room: RoomState,
+  entry: Omit<ActivityEntry, 'id' | 'timestamp'>,
+): Promise<void> {
+  const full: ActivityEntry = {
+    id: Math.random().toString(36).slice(2),
+    timestamp: new Date().toISOString(),
+    ...entry,
+  };
+
+  // Circular buffer — keep last ACTIVITY_BUFFER_SIZE entries
+  room.activityLog.push(full);
+  if (room.activityLog.length > ACTIVITY_BUFFER_SIZE) room.activityLog.shift();
+
+  // Broadcast to everyone in the room (including the actor — they see their own actions)
+  io.to(roomId).emit('activity-log', full);
+
+  // Persist asynchronously — fire-and-forget, no await (keeps event loop free)
+  if (prisma) {
+    (async () => {
+      try {
+        const dbRoom = await prisma!.room.findUnique({ where: { code: roomId } });
+        if (dbRoom) {
+          await prisma!.activityLog.create({
+            data: {
+              roomId: dbRoom.id,
+              userName: full.userName,
+              action: full.action,
+              target: full.target ?? null,
+              timestamp: new Date(full.timestamp),
+            },
+          });
+        }
+      } catch {
+        // DB not available — in-memory only
+      }
+    })();
+  }
+}
+
+/** Schedule (or re-schedule) a debounced "X edited Y" activity entry. */
+function scheduleEditActivityLog(roomId: string, room: RoomState, userName: string, color: string, fileName: string): void {
+  // Update who's editing what (latest user to touch the file wins the log entry)
+  room.lastEditInfo = { userName, color, fileName };
+
+  if (room.editActivityTimer) return; // already scheduled, don't reset — first editor of the burst gets the entry
+  room.editActivityTimer = setTimeout(() => {
+    room.editActivityTimer = null;
+    const info = room.lastEditInfo;
+    room.lastEditInfo = null;
+    if (info) {
+      logActivity(roomId, room, {
+        userName: info.userName,
+        color: info.color,
+        action: 'edited',
+        target: info.fileName,
+      });
+    }
+  }, EDIT_LOG_DEBOUNCE_MS);
 }
 
 // ─── REST ─────────────────────────────────────────────────────
@@ -180,7 +282,6 @@ io.on('connection', (socket) => {
   socket.on('join-room', async (payload: { roomId: string; userName: string; color: string }) => {
     const { roomId, userName, color } = payload;
 
-    // Leave previous room if re-joining
     if (currentRoomId && currentRoomId !== roomId) {
       socket.leave(currentRoomId);
       const prev = rooms.get(currentRoomId);
@@ -198,20 +299,24 @@ io.on('connection', (socket) => {
 
     console.log(`[Room] ${userName} joined ${roomId} (${room.users.size} users)`);
 
-    // Send full room state to the newly joined user
+    // Hydrate the new joiner with full room state + activity history
     socket.emit('room-state', {
       files: Array.from(room.files.entries()).map(([name, content]) => ({ name, content })),
       activeFile: room.activeFile,
       users: Array.from(room.users.values()),
     });
 
-    // Notify others
+    // Deliver the activity history buffer to the new joiner
+    socket.emit('activity-history', room.activityLog);
+
+    // Notify others of the join
     socket.to(roomId).emit('user-joined', { socketId: socket.id, name: userName, color });
+
+    // Log the join event
+    await logActivity(roomId, room, { userName, color, action: 'joined the room' });
   });
 
   // ── Code Change ──────────────────────────────────────────────
-  // Sender edits a file; broadcast to everyone else in the room.
-  // Includes fileName so receivers can update the correct file in their state.
   socket.on('code-change', (payload: { code: string; fileName: string }) => {
     if (!currentRoomId) return;
     const room = rooms.get(currentRoomId);
@@ -220,8 +325,13 @@ io.on('connection', (socket) => {
     room.files.set(payload.fileName, payload.code);
     socket.to(currentRoomId).emit('code-change', { code: payload.code, fileName: payload.fileName });
 
-    // Debounce DB sync — don't write on every keystroke
     scheduleDebouncedDBSync(currentRoomId, room);
+
+    // Debounced edit log — one entry per burst of keystrokes, not per keystroke
+    const user = room.users.get(socket.id);
+    if (user) {
+      scheduleEditActivityLog(currentRoomId, room, user.name, user.color, payload.fileName);
+    }
   });
 
   // ── File Create ──────────────────────────────────────────────
@@ -231,14 +341,16 @@ io.on('connection', (socket) => {
     if (!room) return;
 
     const name = payload.fileName.trim();
-    if (!name || room.files.has(name)) return; // Ignore duplicates/empty
+    if (!name || room.files.has(name)) return;
 
     room.files.set(name, '');
-    // Broadcast to ALL in room (including sender) — keeps state consistent
     io.to(currentRoomId).emit('file-created', { name, content: '' });
-
-    // Persist immediately — file structure changes are infrequent
     await saveRoomToDB(currentRoomId, room);
+
+    const user = room.users.get(socket.id);
+    if (user) {
+      await logActivity(currentRoomId, room, { userName: user.name, color: user.color, action: 'created', target: name });
+    }
   });
 
   // ── File Delete ──────────────────────────────────────────────
@@ -249,19 +361,19 @@ io.on('connection', (socket) => {
 
     room.files.delete(payload.fileName);
 
-    // If the deleted file was active, switch everyone to the first remaining file
     let newActiveFile = room.activeFile;
     if (room.activeFile === payload.fileName) {
       newActiveFile = room.files.size > 0 ? room.files.keys().next().value! : '';
       room.activeFile = newActiveFile;
     }
 
-    io.to(currentRoomId).emit('file-deleted', {
-      fileName: payload.fileName,
-      newActiveFile,
-    });
-
+    io.to(currentRoomId).emit('file-deleted', { fileName: payload.fileName, newActiveFile });
     await saveRoomToDB(currentRoomId, room);
+
+    const user = room.users.get(socket.id);
+    if (user) {
+      await logActivity(currentRoomId, room, { userName: user.name, color: user.color, action: 'deleted', target: payload.fileName });
+    }
   });
 
   // ── File Rename ──────────────────────────────────────────────
@@ -277,48 +389,46 @@ io.on('connection', (socket) => {
     const content = room.files.get(oldName)!;
     room.files.delete(oldName);
     room.files.set(trimmedNew, content);
+    if (room.activeFile === oldName) room.activeFile = trimmedNew;
 
-    if (room.activeFile === oldName) {
-      room.activeFile = trimmedNew;
-    }
-
-    io.to(currentRoomId).emit('file-renamed', {
-      oldName,
-      newName: trimmedNew,
-      newActiveFile: room.activeFile,
-    });
-
+    io.to(currentRoomId).emit('file-renamed', { oldName, newName: trimmedNew, newActiveFile: room.activeFile });
     await saveRoomToDB(currentRoomId, room);
+
+    const user = room.users.get(socket.id);
+    if (user) {
+      // Pack both names into target so the client can display "oldName → newName"
+      await logActivity(currentRoomId, room, {
+        userName: user.name,
+        color: user.color,
+        action: 'renamed',
+        target: `${oldName} → ${trimmedNew}`,
+      });
+    }
   });
 
   // ── File Switch ──────────────────────────────────────────────
-  // Shared active file: when any user switches, everyone switches.
   socket.on('file-switch', (payload: { fileName: string }) => {
     if (!currentRoomId) return;
     const room = rooms.get(currentRoomId);
     if (!room || !room.files.has(payload.fileName)) return;
 
     room.activeFile = payload.fileName;
-    // Broadcast to others; sender already switched locally
     socket.to(currentRoomId).emit('file-switched', { fileName: payload.fileName });
   });
 
   // ── Cursor Update ────────────────────────────────────────────
-  // Ephemeral — broadcast to others only, never persisted.
-  // Client throttles emissions to ~50ms; server is just a relay.
   socket.on('cursor-update', (payload: {
     fileName: string;
     position: { lineNumber: number; column: number };
     selection: { startLineNumber: number; startColumn: number; endLineNumber: number; endColumn: number } | null;
   }) => {
     if (!currentRoomId) return;
-    // Attach the sender's socketId so receivers know whose cursor this is
     socket.to(currentRoomId).emit('cursor-update', { socketId: socket.id, ...payload });
   });
 
   // ── Disconnect ───────────────────────────────────────────────
 
-  socket.on('disconnect', () => {
+  socket.on('disconnect', async () => {
     if (!currentRoomId) return;
     const room = rooms.get(currentRoomId);
     if (!room) return;
@@ -329,15 +439,23 @@ io.on('connection', (socket) => {
 
     console.log(`[Socket] ${user?.name ?? 'Unknown'} disconnected from ${currentRoomId} (${room.users.size} remaining)`);
 
-    // Flush any pending DB sync immediately before potentially deleting the room
+    // Log the leave event before potentially evicting the room
+    if (user) {
+      await logActivity(currentRoomId, room, { userName: user.name, color: user.color, action: 'left the room' });
+    }
+
     if (room.dbSyncTimer) {
       clearTimeout(room.dbSyncTimer);
       room.dbSyncTimer = null;
-      saveRoomToDB(currentRoomId, room); // Fire-and-forget
+      saveRoomToDB(currentRoomId, room);
     }
 
-    // Evict empty rooms from memory (DB retains the data)
     if (room.users.size === 0) {
+      // Clear edit debounce before evicting
+      if (room.editActivityTimer) {
+        clearTimeout(room.editActivityTimer);
+        room.editActivityTimer = null;
+      }
       rooms.delete(currentRoomId);
       console.log(`[Room] Evicted empty room from memory: ${currentRoomId}`);
     }

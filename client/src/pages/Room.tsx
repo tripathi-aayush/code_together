@@ -4,6 +4,7 @@ import { connectSocket, disconnectSocket, getSocket } from '../lib/socket';
 import { nameToColor } from '../lib/colors';
 import CodeEditor, { type RemoteCursor, type CursorPosition, type CursorSelection } from '../components/Editor';
 import FileExplorer from '../components/FileExplorer';
+import ActivityLog, { type ActivityEntry } from '../components/ActivityLog';
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -47,6 +48,11 @@ export default function Room() {
   const [users, setUsers] = useState<RoomUser[]>([]);
   const [connected, setConnected] = useState(false);
   const [copied, setCopied] = useState(false);
+
+  /** Append-only activity log — last 100 entries shown in the panel. */
+  const [activityLog, setActivityLog] = useState<ActivityEntry[]>([]);
+  /** Whether the activity panel is expanded. */
+  const [isLogOpen, setIsLogOpen] = useState(true);
 
   /**
    * Remote cursor data from server: socketId → { fileName, position, selection }
@@ -134,6 +140,20 @@ export default function Room() {
       }));
     };
 
+    // ── Activity Log ─────────────────────────────────────────
+    // Server sends full history buffer to the joining user.
+    const onActivityHistory = (entries: ActivityEntry[]) => {
+      setActivityLog(entries);
+    };
+    // Server broadcasts one new entry at a time.
+    const onActivityLogEntry = (entry: ActivityEntry) => {
+      setActivityLog((prev) => {
+        // Keep last 100 entries in the UI too
+        const next = [...prev, entry];
+        return next.length > 100 ? next.slice(next.length - 100) : next;
+      });
+    };
+
     // ── File events ──────────────────────────────────────────
     // All file operations broadcast to ALL in room (including sender) — state stays consistent.
 
@@ -185,6 +205,8 @@ export default function Room() {
     socket.on('user-joined', onUserJoined);
     socket.on('user-left', onUserLeft);
     socket.on('cursor-update', onCursorUpdate);
+    socket.on('activity-history', onActivityHistory);
+    socket.on('activity-log', onActivityLogEntry);
     socket.on('file-created', onFileCreated);
     socket.on('file-deleted', onFileDeleted);
     socket.on('file-renamed', onFileRenamed);
@@ -200,6 +222,8 @@ export default function Room() {
       socket.off('user-joined', onUserJoined);
       socket.off('user-left', onUserLeft);
       socket.off('cursor-update', onCursorUpdate);
+      socket.off('activity-history', onActivityHistory);
+      socket.off('activity-log', onActivityLogEntry);
       socket.off('file-created', onFileCreated);
       socket.off('file-deleted', onFileDeleted);
       socket.off('file-renamed', onFileRenamed);
@@ -353,22 +377,30 @@ export default function Room() {
         </aside>
 
         <main className="room-editor">
-          {activeFile ? (
-            <CodeEditor
-              key={activeFile}          // Remount Monaco on file switch → clean undo history + fresh decorations
-              value={editorValue}
-              onChange={handleEditorChange}
-              fileName={activeFile}
-              remoteCursors={remoteCursors}
-              onCursorChange={handleCursorChange}
-            />
-          ) : (
-            <div className="editor-empty">
-              <div className="editor-empty-icon">📂</div>
-              <p>No file selected</p>
-              <p className="editor-empty-sub">Create a file using the panel on the left</p>
-            </div>
-          )}
+          <div className="room-editor-inner">
+            {activeFile ? (
+              <CodeEditor
+                key={activeFile}          // Remount Monaco on file switch → clean undo history + fresh decorations
+                value={editorValue}
+                onChange={handleEditorChange}
+                fileName={activeFile}
+                remoteCursors={remoteCursors}
+                onCursorChange={handleCursorChange}
+              />
+            ) : (
+              <div className="editor-empty">
+                <div className="editor-empty-icon">📂</div>
+                <p>No file selected</p>
+                <p className="editor-empty-sub">Create a file using the panel on the left</p>
+              </div>
+            )}
+          </div>
+
+          <ActivityLog
+            entries={activityLog}
+            isOpen={isLogOpen}
+            onToggle={() => setIsLogOpen((v) => !v)}
+          />
         </main>
 
       </div>
