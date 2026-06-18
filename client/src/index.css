@@ -886,8 +886,437 @@ html, body, #root {
   text-align: center;
 }
 
+/* ─── Home Page — Phase 5 Additions ────────────────────────── */
+
+.home-glow-2 {
+  width: 300px;
+  height: 300px;
+  background: radial-gradient(circle, rgba(0, 212, 170, 0.07) 0%, transparent 70%);
+  top: 70%;
+  left: 70%;
+  transform: translate(-60%, -40%);
+  animation: glowPulse 8s ease-in-out infinite reverse;
+}
+
+/* Per-field inline error */
+.field-error {
+  font-size: 12px;
+  color: var(--danger);
+  font-weight: 500;
+  display: block;
+  margin-top: 2px;
+  animation: fadeIn 150ms ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Copy-link toast */
+.copy-toast {
+  font-size: 13px;
+  color: var(--success);
+  font-weight: 600;
+  text-align: center;
+  padding: 6px 12px;
+  background: rgba(0, 212, 170, 0.1);
+  border: 1px solid rgba(0, 212, 170, 0.2);
+  border-radius: var(--radius-sm);
+  animation: fadeIn 150ms ease;
+}
+
+/* Tech stack badges */
+.home-tech-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 24px;
+}
+
+.tech-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 20px;
+  color: var(--text-secondary);
+  letter-spacing: 0.3px;
+}
+
+/* Feature pills row */
+.home-features {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+  margin-top: 24px;
+  width: 100%;
+  max-width: 440px;
+}
+
+.feature-pill {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.feature-pill:hover {
+  border-color: var(--accent-primary);
+  background: var(--bg-hover);
+}
+
+.feature-pill-icon {
+  font-size: 18px;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.feature-pill-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.feature-pill-text strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.feature-pill-text span {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+/* How it works strip */
+.how-it-works {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 20px;
+  flex-wrap: wrap;
+  justify-content: center;
+  max-width: 640px;
+}
+
+.how-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.how-step-number {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--accent-primary);
+  color: white;
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.how-step-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.how-step-body strong {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.how-step-body span {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.how-step-arrow {
+  font-size: 16px;
+  color: var(--border-medium);
+  flex-shrink: 0;
+}
+
+/* ─── Tab Bar ─────────────────────────────────────────────── */
+
+.tab-bar {
+  display: flex;
+  align-items: center;
+  height: 36px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+  padding: 0 8px;
+  gap: 0;
+  overflow: hidden;
+}
+
+.tab-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 0 8px;
+  flex-shrink: 0;
+}
+
+.tab-breadcrumb-room {
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+}
+
+.tab-breadcrumb-sep {
+  color: var(--border-medium);
+}
+
+.tab-breadcrumb-file {
+  color: var(--text-secondary);
+}
+
+.tab-active {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px 0 8px;
+  height: 100%;
+  border-right: 1px solid var(--border-subtle);
+  border-left: 1px solid var(--border-subtle);
+  background: var(--bg-primary);
+  position: relative;
+  min-width: 0;
+}
+
+/* Active tab bottom border highlight */
+.tab-active::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--accent-primary);
+}
+
+.tab-lang-badge {
+  font-size: 9px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  padding: 1px 4px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  letter-spacing: 0.3px;
+}
+
+.tab-file-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+
+.tab-cursor-count {
+  font-size: 10px;
+  font-weight: 700;
+  min-width: 16px;
+  height: 16px;
+  background: var(--accent-primary);
+  color: white;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+  flex-shrink: 0;
+}
+
+.tab-spacer {
+  flex: 1;
+}
+
+/* ─── Reconnect Banner ────────────────────────────────────── */
+
+.reconnect-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: rgba(255, 68, 102, 0.12);
+  border-bottom: 1px solid rgba(255, 68, 102, 0.2);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--danger);
+  flex-shrink: 0;
+  animation: fadeIn 300ms ease;
+}
+
+.reconnect-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--danger);
+  flex-shrink: 0;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+/* ─── File Explorer — Phase 5 Additions ──────────────────── */
+
+/* File count badge in explorer header */
+.file-count-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 600;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  color: var(--text-muted);
+  margin-left: 5px;
+  vertical-align: middle;
+}
+
+/* Per-file remote cursor dot */
+.file-cursor-dot {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--accent-primary);
+  color: white;
+  font-size: 9px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+}
+
+/* ─── Activity Log — Phase 5 Additions ───────────────────── */
+
+.activity-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.activity-new-pill {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 7px;
+  background: var(--accent-primary);
+  color: white;
+  border-radius: 10px;
+  animation: fadeIn 200ms ease;
+}
+
 /* ─── Responsive ───────────────────────────────────────────── */
 
+/* Medium desktops / laptops */
+@media (max-width: 1280px) {
+  .room-sidebar {
+    width: 200px;
+  }
+}
+
+/* Small laptops */
+@media (max-width: 1024px) {
+  .room-sidebar {
+    width: 180px;
+  }
+
+  /* Close activity panel by default on smaller screens to save space */
+  .activity-open {
+    max-height: 160px;
+  }
+
+  .tab-file-name {
+    max-width: 140px;
+  }
+}
+
+/* Tablets / small laptops */
+@media (max-width: 768px) {
+  .room-sidebar {
+    width: 44px;
+    overflow: visible;
+  }
+
+  /* Icon-only sidebar: hide text labels, show only icons */
+  .file-explorer-title,
+  .file-name,
+  .file-count-badge,
+  .file-cursor-dot {
+    display: none;
+  }
+
+  .file-explorer-header {
+    justify-content: center;
+    padding: 10px 0 6px;
+  }
+
+  .fe-new-btn {
+    width: 28px;
+    height: 28px;
+  }
+
+  .file-item {
+    justify-content: center;
+    padding: 0 4px;
+  }
+
+  .file-item-btn {
+    justify-content: center;
+    padding: 0;
+    width: 32px;
+  }
+
+  .file-icon {
+    font-size: 16px;
+  }
+
+  .room-title {
+    display: none;
+  }
+
+  .tab-breadcrumb {
+    display: none;
+  }
+
+  .home-features {
+    grid-template-columns: 1fr;
+  }
+
+  .how-it-works {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .how-step-arrow {
+    display: none;
+  }
+}
+
+/* Mobile / very small screens */
 @media (max-width: 480px) {
   .home-card {
     padding: 32px 24px;
@@ -901,17 +1330,19 @@ html, body, #root {
     display: none;
   }
 
-  .room-title {
-    display: none;
+  .room-header {
+    padding: 0 10px;
+    gap: 6px;
   }
 
-  .room-sidebar {
-    width: 160px;
+  .room-code-value {
+    font-size: 11px;
+  }
+
+  .presence-chip {
+    width: 24px;
+    height: 24px;
+    font-size: 10px;
   }
 }
 
-@media (max-width: 768px) {
-  .room-sidebar {
-    width: 180px;
-  }
-}

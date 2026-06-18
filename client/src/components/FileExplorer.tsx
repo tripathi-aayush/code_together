@@ -1,5 +1,9 @@
 import { useState, useRef, useEffect, type KeyboardEvent } from 'react';
 
+interface RawCursorData {
+  fileName: string;
+}
+
 interface FileExplorerProps {
   files: string[];
   activeFile: string;
@@ -7,6 +11,8 @@ interface FileExplorerProps {
   onFileCreate: (name: string) => void;
   onFileDelete: (name: string) => void;
   onFileRename: (oldName: string, newName: string) => void;
+  /** Optional: remoteCursorData map for showing per-file user indicator dots */
+  remoteCursorData?: Record<string, RawCursorData>;
 }
 
 function getFileIcon(name: string): string {
@@ -15,12 +21,14 @@ function getFileIcon(name: string): string {
     js: '🟨', ts: '🔷', tsx: '⚛️', jsx: '⚛️',
     css: '🎨', html: '🌐', json: '📋', md: '📝',
     py: '🐍', rs: '🦀', go: '🐹', sh: '⚙️',
+    sql: '🗄️', yaml: '📐', yml: '📐', vue: '💚',
   };
   return icons[ext] ?? '📄';
 }
 
 export default function FileExplorer({
   files, activeFile, onFileSelect, onFileCreate, onFileDelete, onFileRename,
+  remoteCursorData = {},
 }: FileExplorerProps) {
   const [isCreating, setIsCreating] = useState(false);
   const [newFileName, setNewFileName] = useState('');
@@ -31,7 +39,6 @@ export default function FileExplorer({
   const newFileInputRef = useRef<HTMLInputElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
 
-  // Auto-focus inputs when they appear
   useEffect(() => {
     if (isCreating) newFileInputRef.current?.focus();
   }, [isCreating]);
@@ -40,13 +47,18 @@ export default function FileExplorer({
     if (renamingFile) renameInputRef.current?.focus();
   }, [renamingFile]);
 
-  // Close delete confirm when clicking elsewhere
   useEffect(() => {
     if (!deleteConfirm) return;
     const handler = () => setDeleteConfirm(null);
     document.addEventListener('click', handler);
     return () => document.removeEventListener('click', handler);
   }, [deleteConfirm]);
+
+  // Count remote users per file
+  const usersPerFile: Record<string, number> = {};
+  Object.values(remoteCursorData).forEach(({ fileName }) => {
+    usersPerFile[fileName] = (usersPerFile[fileName] ?? 0) + 1;
+  });
 
   // ─── Create file ─────────────────────────────────────────────
 
@@ -100,20 +112,31 @@ export default function FileExplorer({
     <div className="file-explorer">
       {/* Header */}
       <div className="file-explorer-header">
-        <span className="file-explorer-title">Files</span>
+        <span className="file-explorer-title">
+          Files
+          {files.length > 0 && (
+            <span className="file-count-badge">{files.length}</span>
+          )}
+        </span>
         <button
           className="fe-new-btn"
           onClick={() => setIsCreating(true)}
-          title="New file"
+          title="New file (Enter name, press Enter)"
+          aria-label="Create new file"
         >
           +
         </button>
       </div>
 
       {/* File list */}
-      <ul className="file-list">
+      <ul className="file-list" role="listbox" aria-label="Files">
         {files.map((name) => (
-          <li key={name} className={`file-item ${name === activeFile ? 'active' : ''}`}>
+          <li
+            key={name}
+            className={`file-item ${name === activeFile ? 'active' : ''}`}
+            role="option"
+            aria-selected={name === activeFile}
+          >
             {renamingFile === name ? (
               <input
                 ref={renameInputRef}
@@ -123,6 +146,7 @@ export default function FileExplorer({
                 onKeyDown={handleRenameKeyDown}
                 onBlur={submitRename}
                 onClick={(e) => e.stopPropagation()}
+                aria-label={`Rename ${name}`}
               />
             ) : (
               <button
@@ -131,8 +155,17 @@ export default function FileExplorer({
                 onDoubleClick={() => startRename(name)}
                 title={`${name} — double-click to rename`}
               >
-                <span className="file-icon">{getFileIcon(name)}</span>
+                <span className="file-icon" aria-hidden="true">{getFileIcon(name)}</span>
                 <span className="file-name">{name}</span>
+                {/* Remote cursor dot — shows how many users are on this file */}
+                {usersPerFile[name] > 0 && (
+                  <span
+                    className="file-cursor-dot"
+                    title={`${usersPerFile[name]} user${usersPerFile[name] > 1 ? 's' : ''} editing`}
+                  >
+                    {usersPerFile[name]}
+                  </span>
+                )}
               </button>
             )}
 
@@ -141,6 +174,7 @@ export default function FileExplorer({
               className={`file-delete-btn ${deleteConfirm === name ? 'confirming' : ''}`}
               onClick={(e) => handleDeleteClick(e, name)}
               title={deleteConfirm === name ? 'Click again to confirm delete' : 'Delete file'}
+              aria-label={deleteConfirm === name ? `Confirm delete ${name}` : `Delete ${name}`}
             >
               {deleteConfirm === name ? '✓' : '×'}
             </button>
@@ -150,7 +184,7 @@ export default function FileExplorer({
         {/* New file input row */}
         {isCreating && (
           <li className="file-item creating">
-            <span className="file-icon">📄</span>
+            <span className="file-icon" aria-hidden="true">📄</span>
             <input
               ref={newFileInputRef}
               className="file-new-input"
@@ -159,6 +193,7 @@ export default function FileExplorer({
               onChange={(e) => setNewFileName(e.target.value)}
               onKeyDown={handleCreateKeyDown}
               onBlur={submitCreate}
+              aria-label="New file name"
             />
           </li>
         )}

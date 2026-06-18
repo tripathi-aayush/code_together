@@ -1,11 +1,11 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 export interface ActivityEntry {
   id: string;
   userName: string;
   color: string;
-  action: string;   // "joined the room" | "left the room" | "created" | "deleted" | "renamed" | "edited"
-  target?: string;  // file name (or "oldName → newName" for renames)
+  action: string;   // "joined the room" | "left the room" | "created" | "deleted" | "renamed …→…" | "edited"
+  target?: string;  // file name if applicable
   timestamp: string; // ISO string
 }
 
@@ -42,6 +42,17 @@ function actionLabel(action: string): { icon: string; verb: string } {
 
 export default function ActivityLog({ entries, isOpen, onToggle }: ActivityLogProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  // Bump this every 30s to re-render all relative timestamps
+  const [, setTick] = useState(0);
+  // Track unseen entries when panel is collapsed
+  const [unseenCount, setUnseenCount] = useState(0);
+  const prevEntryCount = useRef(entries.length);
+
+  // Live-update timestamps every 30 seconds
+  useEffect(() => {
+    const id = setInterval(() => setTick(t => t + 1), 30_000);
+    return () => clearInterval(id);
+  }, []);
 
   // Auto-scroll to the latest entry whenever the log grows or panel opens
   useEffect(() => {
@@ -49,6 +60,20 @@ export default function ActivityLog({ entries, isOpen, onToggle }: ActivityLogPr
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [entries.length, isOpen]);
+
+  // Track unseen entries when collapsed
+  useEffect(() => {
+    const newCount = entries.length - prevEntryCount.current;
+    if (newCount > 0 && !isOpen) {
+      setUnseenCount(prev => prev + newCount);
+    }
+    prevEntryCount.current = entries.length;
+  }, [entries.length, isOpen]);
+
+  // Clear unseen count when panel opens
+  useEffect(() => {
+    if (isOpen) setUnseenCount(0);
+  }, [isOpen]);
 
   return (
     <div className={`activity-panel ${isOpen ? 'activity-open' : 'activity-closed'}`}>
@@ -62,7 +87,15 @@ export default function ActivityLog({ entries, isOpen, onToggle }: ActivityLogPr
             <span className="activity-badge">{Math.min(entries.length, 99)}{entries.length >= 100 ? '+' : ''}</span>
           )}
         </span>
-        <span className={`activity-chevron ${isOpen ? 'up' : 'down'}`}>›</span>
+        <span className="activity-header-right">
+          {/* New activity pill — shown when collapsed and there are unseen entries */}
+          {!isOpen && unseenCount > 0 && (
+            <span className="activity-new-pill">
+              ↓ {unseenCount} new
+            </span>
+          )}
+          <span className={`activity-chevron ${isOpen ? 'up' : 'down'}`}>›</span>
+        </span>
       </button>
 
       {/* Collapsible entries list */}
@@ -90,11 +123,11 @@ export default function ActivityLog({ entries, isOpen, onToggle }: ActivityLogPr
                     <span className="activity-action-icon">{icon}</span>
                     <span className="activity-verb">{verb}</span>
                     {entry.target && (
-                      <span className="activity-target">{entry.target}</span>
+                      <span className="activity-target" title={entry.target}>{entry.target}</span>
                     )}
                   </div>
 
-                  {/* Relative timestamp */}
+                  {/* Relative timestamp — updates every 30s */}
                   <time
                     className="activity-time"
                     dateTime={entry.timestamp}

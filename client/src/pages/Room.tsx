@@ -5,6 +5,7 @@ import { nameToColor } from '../lib/colors';
 import CodeEditor, { type RemoteCursor, type CursorPosition, type CursorSelection } from '../components/Editor';
 import FileExplorer from '../components/FileExplorer';
 import ActivityLog, { type ActivityEntry } from '../components/ActivityLog';
+import TabBar from '../components/TabBar';
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -36,7 +37,15 @@ export default function Room() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
 
-  const userName = searchParams.get('name') || 'Anonymous';
+  const userName = searchParams.get('name') || '';
+
+  // Redirect to home if no name provided (e.g., user navigated directly to /room/xyz)
+  useEffect(() => {
+    if (!userName.trim()) {
+      navigate(`/?room=${roomId ?? ''}`, { replace: true });
+    }
+  }, [userName, roomId, navigate]);
+
   // Color is deterministically derived from name — consistent across sessions
   const myColor = nameToColor(userName);
 
@@ -48,6 +57,8 @@ export default function Room() {
   const [users, setUsers] = useState<RoomUser[]>([]);
   const [connected, setConnected] = useState(false);
   const [copied, setCopied] = useState(false);
+  /** True while the first room-state event hasn't arrived yet (loading skeleton) */
+  const [hydrated, setHydrated] = useState(false);
 
   /** Append-only activity log — last 100 entries shown in the panel. */
   const [activityLog, setActivityLog] = useState<ActivityEntry[]>([]);
@@ -74,15 +85,21 @@ export default function Room() {
   // ─── Socket lifecycle ─────────────────────────────────────────
 
   useEffect(() => {
-    if (!roomId) { navigate('/'); return; }
+    if (!roomId || !userName.trim()) return;
 
     const socket = connectSocket();
 
-    const onConnect = () => {
+    /**
+     * joinRoom is called both on initial connect AND on reconnect.
+     * The server's join-room handler re-hydrates the client with full room state,
+     * so reconnecting naturally resyncs all files, users, and activity history.
+     */
+    const joinRoom = () => {
       setConnected(true);
-      socket.emit('join-room', { roomId, userName, color: myColor });
+      socket.emit('join-room', { roomId, userName: userName.trim(), color: myColor });
     };
 
+    const onConnect = () => joinRoom();
     const onDisconnect = () => setConnected(false);
 
     // Full hydration on join — populates files, activeFile, and all present users
@@ -103,6 +120,7 @@ export default function Room() {
       setFileNames(newNames);
       setActiveFile(payload.activeFile);
       setUsers(payload.users);
+      setHydrated(true);
       requestAnimationFrame(() => { isRemoteUpdate.current = false; });
     };
 
@@ -131,7 +149,6 @@ export default function Room() {
     };
 
     // ── Cursor Update ─────────────────────────────────────────
-    // Server attaches socketId before broadcasting; we store it by socketId.
     const onCursorUpdate = (payload: { socketId: string } & RawCursorData) => {
       const { socketId, fileName, position, selection } = payload;
       setRemoteCursorData((prev) => ({
@@ -141,21 +158,17 @@ export default function Room() {
     };
 
     // ── Activity Log ─────────────────────────────────────────
-    // Server sends full history buffer to the joining user.
     const onActivityHistory = (entries: ActivityEntry[]) => {
       setActivityLog(entries);
     };
-    // Server broadcasts one new entry at a time.
     const onActivityLogEntry = (entry: ActivityEntry) => {
       setActivityLog((prev) => {
-        // Keep last 100 entries in the UI too
         const next = [...prev, entry];
         return next.length > 100 ? next.slice(next.length - 100) : next;
       });
     };
 
     // ── File events ──────────────────────────────────────────
-    // All file operations broadcast to ALL in room (including sender) — state stays consistent.
 
     const onFileCreated = (payload: { name: string; content: string }) => {
       setFiles((prev) => ({ ...prev, [payload.name]: payload.content }));
@@ -170,7 +183,6 @@ export default function Room() {
       });
       setFileNames((prev) => prev.filter((n) => n !== payload.fileName));
       setActiveFile(payload.newActiveFile);
-      // Also clear any cursors that were on the deleted file
       setRemoteCursorData((prev) => {
         const next = { ...prev };
         Object.keys(next).forEach((id) => {
@@ -234,7 +246,6 @@ export default function Room() {
 
   // ─── Local editor changes ─────────────────────────────────────
 
-  // Stable callback — reads activeFile via ref to avoid re-creating on every render
   const handleEditorChange = useCallback((value: string | undefined) => {
     if (isRemoteUpdate.current) return;
     const code = value ?? '';
@@ -247,8 +258,6 @@ export default function Room() {
 
   // ─── Cursor change ────────────────────────────────────────────
 
-  // Editor calls this on every cursor/selection change.
-  // We throttle the actual socket.emit here to avoid flooding the server.
   const handleCursorChange = useCallback((
     position: CursorPosition,
     selection: CursorSelection | null,
@@ -309,6 +318,9 @@ export default function Room() {
     [users, remoteCursorData, activeFile],
   );
 
+  // Count of remote users on the active file (for TabBar indicator)
+  const remoteCursorCount = remoteCursors.length;
+
   // ─── Utils ───────────────────────────────────────────────────
 
   const copyRoomCode = () => {
@@ -320,43 +332,68 @@ export default function Room() {
 
   const editorValue = files[activeFile] ?? '';
 
-  if (!roomId) return null;
+  if (!roomId || !userName.trim()) return null;
 
   return (
     <div className="room-container">
 
+      {/* ─── Reconnect Banner ─────────────────────────────────── */}
+      {!connected && hydrated && (
+        <div className="reconnect-banner" role="status">
+          <span className="reconnect-dot" />
+          Connection lost — reconnecting… your work is safe
+        </div>
+      )}
+
       {/* ─── Header ───────────────────────────────────────────── */}
       <header className="room-header">
         <div className="room-header-left">
-          <button className="btn-icon" onClick={() => navigate('/')} title="Leave room">←</button>
-          <span className="room-logo">⟨⟩</span>
+          <button
+            className="btn-icon"
+            onClick={() => navigate('/')}
+            title="Leave room"
+            aria-label="Leave room"
+          >
+            ←
+          </button>
+          <span className="room-logo" aria-hidden="true">⟨⟩</span>
           <span className="room-title">CodeTogether</span>
         </div>
 
         <div className="room-header-center">
-          <div className="room-code-badge" onClick={copyRoomCode} title="Click to copy room code">
+          <button
+            className="room-code-badge"
+            onClick={copyRoomCode}
+            title="Click to copy room code"
+            aria-label={`Room code: ${roomId}. Click to copy.`}
+          >
             <span className="room-code-label">Room</span>
             <span className="room-code-value">{roomId}</span>
             <span className="room-code-copy">{copied ? '✓' : '⎘'}</span>
-          </div>
+          </button>
         </div>
 
         <div className="room-header-right">
           {/* Presence chips — color driven by user's assigned HSL color */}
-          <div className="room-presence">
+          <div className="room-presence" aria-label="People in this room">
             {users.map((u) => (
               <div
                 key={u.socketId}
                 className="presence-chip"
                 style={{ background: u.color }}
                 title={u.name}
+                aria-label={u.name}
               >
                 {u.name.charAt(0).toUpperCase()}
               </div>
             ))}
           </div>
-          <div className={`connection-status ${connected ? 'connected' : 'disconnected'}`}>
-            <span className="status-dot" />
+          <div
+            className={`connection-status ${connected ? 'connected' : 'disconnected'}`}
+            role="status"
+            aria-live="polite"
+          >
+            <span className="status-dot" aria-hidden="true" />
             {connected ? 'Live' : 'Reconnecting…'}
           </div>
         </div>
@@ -365,7 +402,7 @@ export default function Room() {
       {/* ─── Body: sidebar + editor ───────────────────────────── */}
       <div className="room-body">
 
-        <aside className="room-sidebar">
+        <aside className="room-sidebar" aria-label="File explorer">
           <FileExplorer
             files={fileNames}
             activeFile={activeFile}
@@ -373,14 +410,30 @@ export default function Room() {
             onFileCreate={handleFileCreate}
             onFileDelete={handleFileDelete}
             onFileRename={handleFileRename}
+            remoteCursorData={remoteCursorData}
           />
         </aside>
 
         <main className="room-editor">
+          {/* Tab bar — visible when a file is active */}
+          {activeFile && (
+            <TabBar
+              roomId={roomId}
+              activeFile={activeFile}
+              remoteCursorCount={remoteCursorCount}
+            />
+          )}
+
           <div className="room-editor-inner">
-            {activeFile ? (
+            {!hydrated ? (
+              /* Loading skeleton while waiting for first room-state event */
+              <div className="editor-loading">
+                <div className="editor-loading-spinner" />
+                <span>Joining room…</span>
+              </div>
+            ) : activeFile ? (
               <CodeEditor
-                key={activeFile}          // Remount Monaco on file switch → clean undo history + fresh decorations
+                key={activeFile}       // Remount Monaco on file switch → clean undo history + fresh decorations
                 value={editorValue}
                 onChange={handleEditorChange}
                 fileName={activeFile}
