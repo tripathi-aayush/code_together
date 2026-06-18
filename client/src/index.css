@@ -398,20 +398,7 @@ html, body, #root {
   transform: scale(1.15);
   z-index: 1;
 }
-
-/* Alternate colors for multiple users */
-.presence-chip:nth-child(2n) {
-  background: var(--accent-secondary);
-}
-
-.presence-chip:nth-child(3n) {
-  background: #ff7eb3;
-}
-
-.presence-chip:nth-child(4n) {
-  background: #ffc857;
-  color: #1a1a28;
-}
+/* Colors are now driven by inline style from JS (nameToColor hash) */
 
 /* --- Connection status --- */
 
@@ -452,11 +439,57 @@ html, body, #root {
   50% { opacity: 0.5; }
 }
 
+/* --- Body (sidebar + editor) --- */
+
+.room-body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* --- Sidebar --- */
+
+.room-sidebar {
+  width: 220px;
+  flex-shrink: 0;
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 /* --- Editor area --- */
 
 .room-editor {
   flex: 1;
   overflow: hidden;
+  min-height: 0;
+}
+
+/* Editor empty state */
+.editor-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 12px;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.editor-empty-icon {
+  font-size: 40px;
+  margin-bottom: 8px;
+  opacity: 0.6;
+}
+
+.editor-empty-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+  opacity: 0.7;
 }
 
 /* Monaco editor loading spinner */
@@ -484,6 +517,186 @@ html, body, #root {
   to { transform: rotate(360deg); }
 }
 
+/* ─── File Explorer ────────────────────────────────────────── */
+
+.file-explorer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  user-select: none;
+}
+
+.file-explorer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px 6px;
+  border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+
+.file-explorer-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-muted);
+}
+
+.fe-new-btn {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.fe-new-btn:hover {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: white;
+}
+
+/* File list */
+
+.file-list {
+  list-style: none;
+  padding: 6px 0;
+  flex: 1;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-medium) transparent;
+}
+
+.file-item {
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  position: relative;
+  height: 30px;
+}
+
+.file-item.active .file-item-btn {
+  background: rgba(124, 92, 255, 0.12);
+  color: var(--accent-primary);
+}
+
+.file-item.active .file-name {
+  color: var(--accent-primary);
+  font-weight: 500;
+}
+
+.file-item:hover .file-delete-btn {
+  opacity: 1;
+}
+
+.file-item-btn {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0 6px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--transition-fast), color var(--transition-fast);
+  overflow: hidden;
+}
+
+.file-item-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.file-icon {
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.file-name {
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+}
+
+/* Delete button — hidden until hover */
+.file-delete-btn {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: all var(--transition-fast);
+}
+
+.file-delete-btn:hover {
+  background: rgba(255, 68, 102, 0.15);
+  color: var(--danger);
+}
+
+.file-delete-btn.confirming {
+  opacity: 1;
+  background: rgba(0, 212, 170, 0.15);
+  color: var(--success);
+}
+
+/* Rename input */
+.file-rename-input,
+.file-new-input {
+  flex: 1;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--accent-primary);
+  border-radius: 4px;
+  padding: 2px 6px;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-glow);
+}
+
+.file-item.creating {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+}
+
+/* Empty state */
+.file-explorer-empty {
+  padding: 20px 14px;
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.6;
+  text-align: center;
+}
+
 /* ─── Responsive ───────────────────────────────────────────── */
 
 @media (max-width: 480px) {
@@ -501,5 +714,15 @@ html, body, #root {
 
   .room-title {
     display: none;
+  }
+
+  .room-sidebar {
+    width: 160px;
+  }
+}
+
+@media (max-width: 768px) {
+  .room-sidebar {
+    width: 180px;
   }
 }
