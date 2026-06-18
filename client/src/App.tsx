@@ -1,10 +1,13 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import Home from './pages/Home';
+import Room from './pages/Room';
 
 function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<div style={{ color: '#fff', fontFamily: 'sans-serif', padding: 40 }}>🚀 CodeTogether — Phase 0 scaffold running!</div>} />
+        <Route path="/" element={<Home />} />
+        <Route path="/room/:roomId" element={<Room />} />
       </Routes>
     </BrowserRouter>
   );
