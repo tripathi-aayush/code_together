@@ -1,0 +1,63 @@
+version: '3.9'
+
+services:
+  # ─── PostgreSQL ───────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: collabcode_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-collabcode}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-collabcode_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-collabcode}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-collabcode}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ─── Backend ──────────────────────────────────────────────────
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile.dev
+    container_name: collabcode_server
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-collabcode}:${POSTGRES_PASSWORD:-collabcode_secret}@postgres:5432/${POSTGRES_DB:-collabcode}
+      PORT: 3001
+      CLIENT_URL: http://localhost:5173
+      NODE_ENV: development
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./server:/app
+      - /app/node_modules
+    command: sh -c "npx prisma migrate deploy && npm run dev"
+
+  # ─── Frontend ─────────────────────────────────────────────────
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile.dev
+    container_name: collabcode_client
+    restart: unless-stopped
+    depends_on:
+      - server
+    environment:
+      VITE_SERVER_URL: http://localhost:3001
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./client:/app
+      - /app/node_modules
+
+volumes:
+  postgres_data:

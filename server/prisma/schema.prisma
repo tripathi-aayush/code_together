@@ -1,0 +1,45 @@
+// Prisma schema for CodeTogether
+// Learn more: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Room {
+  id          String       @id @default(cuid())
+  code        String       @unique // the human-friendly join code (e.g. "abc-123")
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  files       File[]
+  activityLog ActivityLog[]
+}
+
+model File {
+  id        String   @id @default(cuid())
+  roomId    String
+  room      Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  name      String
+  content   String   @default("")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([roomId, name])
+}
+
+model ActivityLog {
+  id        String   @id @default(cuid())
+  roomId    String
+  room      Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  userName  String
+  action    String   // e.g. "joined", "left", "created", "deleted", "edited"
+  target    String?  // e.g. file name
+  timestamp DateTime @default(now())
+
+  @@index([roomId, timestamp])
+}
