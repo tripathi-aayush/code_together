@@ -12,6 +12,13 @@ Join a shared room with teammates, edit the same files simultaneously, and see e
 
 ---
 
+## 🚀 Live Demo
+**Try it out now:** [https://code-together-hazel.vercel.app](https://code-together-hazel.vercel.app)
+
+*(Open the link in two separate browser windows to test real-time collaboration!)*
+
+---
+
 ## ✅ Features
 
 - **Real-time sync** — keystrokes appear for all users within ~50ms via Socket.IO broadcast
