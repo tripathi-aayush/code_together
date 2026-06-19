@@ -92,6 +92,17 @@ npm run dev             # http://localhost:5173
 
 ---
 
+## 🚢 Deployment
+
+When deploying to a production environment (e.g., Render, Vercel, Railway), ensure that `VITE_SERVER_URL` is set to your actual public server URL **before** building the frontend. This variable is baked into the client bundle at build time, so setting it at runtime will not work.
+
+Example:
+```bash
+VITE_SERVER_URL=https://api.your-domain.com npm run build
+```
+
+---
+
 ## 🌍 Environment Variables
 
 | Variable | Location | Default | Description |

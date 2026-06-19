@@ -33,7 +33,7 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-collabcode}:${POSTGRES_PASSWORD:-collabcode_secret}@postgres:5432/${POSTGRES_DB:-collabcode}
       PORT: 3001
-      CLIENT_URL: http://localhost:5173
+      CLIENT_URL: ${CLIENT_URL:-http://localhost:5173}
       NODE_ENV: development
     ports:
       - "3001:3001"
@@ -52,7 +52,7 @@ services:
     depends_on:
       - server
     environment:
-      VITE_SERVER_URL: http://localhost:3001
+      VITE_SERVER_URL: ${VITE_SERVER_URL:-http://localhost:3001}
     ports:
       - "5173:5173"
     volumes:

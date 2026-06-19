@@ -121,14 +121,14 @@ export default function Room() {
       setActiveFile(payload.activeFile);
       setUsers(payload.users);
       setHydrated(true);
-      requestAnimationFrame(() => { isRemoteUpdate.current = false; });
+      queueMicrotask(() => { isRemoteUpdate.current = false; });
     };
 
     // Remote keystroke — update the right file, trigger Monaco re-render if active
     const onCodeChange = (payload: { code: string; fileName: string }) => {
       isRemoteUpdate.current = true;
       setFiles((prev) => ({ ...prev, [payload.fileName]: payload.code }));
-      requestAnimationFrame(() => { isRemoteUpdate.current = false; });
+      queueMicrotask(() => { isRemoteUpdate.current = false; });
     };
 
     const onUserJoined = (user: RoomUser) => {
