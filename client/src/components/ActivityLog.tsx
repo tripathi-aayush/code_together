@@ -71,9 +71,9 @@ export default function ActivityLog({ entries, isOpen, onToggle }: ActivityLogPr
   }, [entries.length, isOpen]);
 
   // Clear unseen count when panel opens
-  useEffect(() => {
-    if (isOpen) setUnseenCount(0);
-  }, [isOpen]);
+  if (isOpen && unseenCount !== 0) {
+    setUnseenCount(0);
+  }
 
   return (
     <div className={`activity-panel ${isOpen ? 'activity-open' : 'activity-closed'}`}>

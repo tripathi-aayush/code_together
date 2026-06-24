@@ -134,11 +134,13 @@ export default function CodeEditor({
     const monaco = monacoRef.current;
     if (!editor || !monaco) return;
 
+    const widgetMap = widgetMapRef.current;
+
     // ── 1. Remove all old cursor widgets ──────────────────────
-    widgetMapRef.current.forEach((w) => {
+    widgetMap.forEach((w) => {
       try { editor.removeContentWidget(w); } catch { /* editor may already be destroyed */ }
     });
-    widgetMapRef.current.clear();
+    widgetMap.clear();
 
     // ── 2. Add a content widget per remote user ───────────────
     for (const cursor of remoteCursors) {
@@ -198,7 +200,7 @@ export default function CodeEditor({
       };
 
       editor.addContentWidget(widget);
-      widgetMapRef.current.set(cursor.socketId, widget);
+      widgetMap.set(cursor.socketId, widget);
     }
 
     // ── 3. Update selection decorations ───────────────────────
@@ -236,10 +238,10 @@ export default function CodeEditor({
 
     // ── Cleanup on unmount / before next effect run ───────────
     return () => {
-      widgetMapRef.current.forEach((w) => {
-        try { editor.removeContentWidget(w); } catch { }
+      widgetMap.forEach((w) => {
+        try { editor.removeContentWidget(w); } catch { /* editor may already be disposed */ }
       });
-      widgetMapRef.current.clear();
+      widgetMap.clear();
     };
   }, [remoteCursors]);
 

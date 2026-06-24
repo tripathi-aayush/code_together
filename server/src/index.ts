@@ -5,6 +5,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
+import crypto from 'crypto';
 
 dotenv.config();
 
@@ -102,6 +103,17 @@ function createDefaultRoom(): RoomState {
   };
 }
 
+/** Deterministically maps a user's display name to a consistent HSL color. */
+function nameToColor(name: string): string {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash);
+    hash = hash & hash; // 32-bit int
+  }
+  const hue = Math.abs(hash % 360);
+  return `hsl(${hue}, 70%, 62%)`;
+}
+
 // ─── DB helpers ───────────────────────────────────────────────
 
 async function loadRoomFromDB(roomCode: string): Promise<RoomState | null> {
@@ -123,7 +135,7 @@ async function loadRoomFromDB(roomCode: string): Promise<RoomState | null> {
     const activityLog: ActivityEntry[] = dbRoom.activityLog.map((e) => ({
       id: e.id,
       userName: e.userName,
-      color: '#9090a8', // color not stored in DB — use a neutral fallback
+      color: nameToColor(e.userName),
       action: e.action,
       target: e.target ?? undefined,
       timestamp: e.timestamp.toISOString(),
@@ -209,7 +221,7 @@ async function logActivity(
   entry: Omit<ActivityEntry, 'id' | 'timestamp'>,
 ): Promise<void> {
   const full: ActivityEntry = {
-    id: Math.random().toString(36).slice(2),
+    id: crypto.randomUUID(),
     timestamp: new Date().toISOString(),
     ...entry,
   };
@@ -244,12 +256,13 @@ async function logActivity(
   }
 }
 
-/** Schedule (or re-schedule) a debounced "X edited Y" activity entry. */
 function scheduleEditActivityLog(roomId: string, room: RoomState, userName: string, color: string, fileName: string): void {
   // Update who's editing what (latest user to touch the file wins the log entry)
   room.lastEditInfo = { userName, color, fileName };
 
-  if (room.editActivityTimer) return; // already scheduled, don't reset — first editor of the burst gets the entry
+  if (room.editActivityTimer) {
+    clearTimeout(room.editActivityTimer);
+  }
   room.editActivityTimer = setTimeout(() => {
     room.editActivityTimer = null;
     const info = room.lastEditInfo;
@@ -280,9 +293,17 @@ io.on('connection', (socket) => {
 
   // ── Join Room ────────────────────────────────────────────────
   socket.on('join-room', async (payload: { roomId: string; userName: string; color: string }) => {
-    const { roomId, userName, color } = payload;
+    const { roomId, userName } = payload;
+    const trimmedRoomId = roomId ? roomId.trim() : '';
 
-    if (currentRoomId && currentRoomId !== roomId) {
+    if (!/^[a-z0-9-]{3,40}$/.test(trimmedRoomId)) {
+      socket.emit('error', 'Invalid Room ID. It must be between 3 and 40 characters and only contain lowercase letters, numbers, and hyphens.');
+      return;
+    }
+
+    const derivedColor = nameToColor(userName);
+
+    if (currentRoomId && currentRoomId !== trimmedRoomId) {
       socket.leave(currentRoomId);
       const prev = rooms.get(currentRoomId);
       if (prev) {
@@ -291,13 +312,13 @@ io.on('connection', (socket) => {
       }
     }
 
-    const room = await getOrCreateRoom(roomId);
+    const room = await getOrCreateRoom(trimmedRoomId);
 
-    socket.join(roomId);
-    currentRoomId = roomId;
-    room.users.set(socket.id, { socketId: socket.id, name: userName, color });
+    socket.join(trimmedRoomId);
+    currentRoomId = trimmedRoomId;
+    room.users.set(socket.id, { socketId: socket.id, name: userName, color: derivedColor });
 
-    console.log(`[Room] ${userName} joined ${roomId} (${room.users.size} users)`);
+    console.log(`[Room] ${userName} joined ${trimmedRoomId} (${room.users.size} users)`);
 
     // Hydrate the new joiner with full room state + activity history
     socket.emit('room-state', {
@@ -310,10 +331,10 @@ io.on('connection', (socket) => {
     socket.emit('activity-history', room.activityLog);
 
     // Notify others of the join
-    socket.to(roomId).emit('user-joined', { socketId: socket.id, name: userName, color });
+    socket.to(trimmedRoomId).emit('user-joined', { socketId: socket.id, name: userName, color: derivedColor });
 
     // Log the join event
-    await logActivity(roomId, room, { userName, color, action: 'joined the room' });
+    await logActivity(trimmedRoomId, room, { userName, color: derivedColor, action: 'joined the room' });
   });
 
   // ── Code Change ──────────────────────────────────────────────
@@ -451,6 +472,16 @@ io.on('connection', (socket) => {
     }
 
     if (room.users.size === 0) {
+      // Flush pending edit log entry if it exists, then clear timer
+      if (room.lastEditInfo) {
+        await logActivity(currentRoomId, room, {
+          userName: room.lastEditInfo.userName,
+          color: room.lastEditInfo.color,
+          action: 'edited',
+          target: room.lastEditInfo.fileName,
+        });
+        room.lastEditInfo = null;
+      }
       // Clear edit debounce before evicting
       if (room.editActivityTimer) {
         clearTimeout(room.editActivityTimer);
