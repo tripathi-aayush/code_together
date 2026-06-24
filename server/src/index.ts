@@ -85,6 +85,80 @@ const DB_SYNC_DEBOUNCE_MS = 3000;  // Debounce DB saves — don't hit DB on ever
 const EDIT_LOG_DEBOUNCE_MS = 2000; // One "edited" log entry per 2-second burst of keystrokes
 const ACTIVITY_BUFFER_SIZE = 100;  // Max entries kept in memory per room
 
+// ─── Piston API Cache & Fallback ────────────────────────────────
+interface PistonRuntime {
+  language: string;
+  version: string;
+  aliases: string[];
+}
+
+const DEFAULT_VERSIONS: Record<string, string> = {
+  javascript: '18.15.0',
+  typescript: '5.0.3',
+  python: '3.10.0',
+  html: '1.0.0',
+  cpp: '10.2.0',
+  c: '10.2.0',
+  java: '15.0.2',
+  go: '1.16.2',
+  ruby: '3.0.1',
+  rust: '1.68.2',
+};
+
+const pistonVersions = new Map<string, string>();
+
+async function fetchPistonRuntimes(): Promise<void> {
+  try {
+    const res = await fetch('https://emkc.org/api/v2/piston/runtimes');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = (await res.json()) as PistonRuntime[];
+    
+    pistonVersions.clear();
+
+    const tempMap = new Map<string, string[]>();
+    for (const r of data) {
+      const lang = r.language.toLowerCase();
+      if (!tempMap.has(lang)) tempMap.set(lang, []);
+      tempMap.get(lang)!.push(r.version);
+      
+      for (const alias of r.aliases) {
+        const a = alias.toLowerCase();
+        if (!tempMap.has(a)) tempMap.set(a, []);
+        tempMap.get(a)!.push(r.version);
+      }
+    }
+
+    const compareVersions = (a: string, b: string) => {
+      const pa = a.split('.').map(Number);
+      const pb = b.split('.').map(Number);
+      for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+        const na = pa[i] || 0;
+        const nb = pb[i] || 0;
+        if (na !== nb) return nb - na;
+      }
+      return 0;
+    };
+
+    for (const [lang, versions] of tempMap.entries()) {
+      versions.sort(compareVersions);
+      pistonVersions.set(lang, versions[0]);
+    }
+
+    console.log('[Piston] Runtimes cache updated successfully:');
+    console.log(Array.from(pistonVersions.entries()).map(([k, v]) => `${k}@${v}`).join(', '));
+  } catch (err) {
+    console.warn('[Piston] Failed to fetch runtimes. Using fallback versions.', (err as Error).message);
+    pistonVersions.clear();
+    for (const [lang, ver] of Object.entries(DEFAULT_VERSIONS)) {
+      pistonVersions.set(lang, ver);
+    }
+  }
+}
+
+// Initialize cache and refresh every 24 hours
+fetchPistonRuntimes();
+setInterval(fetchPistonRuntimes, 24 * 60 * 60 * 1000);
+
 // ─── In-memory rooms ──────────────────────────────────────────
 
 const rooms = new Map<string, RoomState>();
@@ -352,6 +426,104 @@ io.on('connection', (socket) => {
     const user = room.users.get(socket.id);
     if (user) {
       scheduleEditActivityLog(currentRoomId, room, user.name, user.color, payload.fileName);
+    }
+  });
+
+  // ── Run Code ─────────────────────────────────────────────────
+  socket.on('run-code', async (payload: { fileName: string; code: string; language: string }) => {
+    if (!currentRoomId) return;
+    const room = rooms.get(currentRoomId);
+    if (!room) return;
+
+    const { fileName, code, language } = payload;
+
+    // 1. Validation
+    if (!room.files.has(fileName)) {
+      socket.emit('error', 'File does not exist in this room.');
+      return;
+    }
+
+    if (!code || code.trim() === '') {
+      socket.emit('error', 'Code cannot be empty.');
+      return;
+    }
+
+    if (code.length > 50000) {
+      socket.emit('error', 'Code exceeds 50,000 character limit.');
+      return;
+    }
+
+    const normalizedLang = language.toLowerCase();
+    const allowedLanguages = ['javascript', 'typescript', 'python', 'html', 'cpp', 'c', 'java', 'go', 'ruby', 'rust'];
+    if (!allowedLanguages.includes(normalizedLang)) {
+      socket.emit('error', 'Language not allowed or supported.');
+      return;
+    }
+
+    const version = pistonVersions.get(normalizedLang) || DEFAULT_VERSIONS[normalizedLang] || 'latest';
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    const startTime = Date.now();
+
+    try {
+      const response = await fetch('https://emkc.org/api/v2/piston/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          language: normalizedLang,
+          version: version,
+          files: [
+            {
+              name: fileName,
+              content: code,
+            },
+          ],
+        }),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+      const executionTime = Date.now() - startTime;
+
+      if (!response.ok) {
+        throw new Error(`Piston API returned status ${response.status}`);
+      }
+
+      const resData = (await response.json()) as any;
+      const stdout = resData.run?.stdout ?? '';
+      const stderr = resData.run?.stderr ?? '';
+      const exitCode = typeof resData.run?.code === 'number' ? resData.run.code : (resData.run?.signal ? -1 : 0);
+
+      socket.emit('run-result', {
+        stdout,
+        stderr,
+        exitCode,
+        language: normalizedLang,
+        fileName,
+        executionTime,
+      });
+
+      const user = room.users.get(socket.id);
+      const userName = user ? user.name : 'A user';
+      socket.to(currentRoomId).emit('run-notification', {
+        userName,
+        fileName,
+      });
+    } catch (err) {
+      clearTimeout(timeoutId);
+      const executionTime = Date.now() - startTime;
+      const errMsg = (err as Error).name === 'AbortError'
+        ? 'Code execution timed out (exceeded 10 seconds).'
+        : `Execution failed: ${(err as Error).message}`;
+
+      socket.emit('run-result', {
+        stdout: '',
+        stderr: errMsg,
+        exitCode: -1,
+        language: normalizedLang,
+        fileName,
+        executionTime,
+      });
     }
   });
 

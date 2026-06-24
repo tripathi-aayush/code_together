@@ -28,9 +28,21 @@ interface TabBarProps {
   activeFile: string;
   /** Optional: sockets of remote users on this file — dot indicators */
   remoteCursorCount?: number;
+  onRun: () => void;
+  isExecuting: boolean;
+  cooldown: number;
+  isExecutable: boolean;
 }
 
-export default function TabBar({ roomId, activeFile, remoteCursorCount = 0 }: TabBarProps) {
+export default function TabBar({
+  roomId,
+  activeFile,
+  remoteCursorCount = 0,
+  onRun,
+  isExecuting,
+  cooldown,
+  isExecutable,
+}: TabBarProps) {
   const { icon, color } = getFileDisplay(activeFile);
 
   return (
@@ -59,6 +71,23 @@ export default function TabBar({ roomId, activeFile, remoteCursorCount = 0 }: Ta
           </span>
         )}
       </div>
+
+      {/* Run button */}
+      <button
+        className={`tab-run-btn ${cooldown > 0 ? 'cooldown' : ''} ${isExecuting ? 'executing' : ''}`}
+        onClick={onRun}
+        disabled={isExecuting || cooldown > 0 || !isExecutable}
+        title={!isExecutable ? "This file type cannot be executed." : (cooldown > 0 ? `Cooldown (${cooldown}s)` : "Run code")}
+        type="button"
+      >
+        {isExecuting ? (
+          <span>⌛ Running...</span>
+        ) : cooldown > 0 ? (
+          <span>⌛ {cooldown}s</span>
+        ) : (
+          <>▶ Run</>
+        )}
+      </button>
 
       <div className="tab-spacer" />
     </div>

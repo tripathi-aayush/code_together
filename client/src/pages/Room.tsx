@@ -6,6 +6,20 @@ import CodeEditor, { type RemoteCursor, type CursorPosition, type CursorSelectio
 import FileExplorer from '../components/FileExplorer';
 import ActivityLog, { type ActivityEntry } from '../components/ActivityLog';
 import TabBar from '../components/TabBar';
+import OutputPanel, { type ExecutionResult } from '../components/OutputPanel';
+
+const extensionToLanguageMap: Record<string, string> = {
+  js: 'javascript',
+  ts: 'typescript',
+  py: 'python',
+  html: 'html',
+  cpp: 'cpp',
+  c: 'c',
+  java: 'java',
+  go: 'go',
+  rb: 'ruby',
+  rs: 'rust',
+};
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -70,6 +84,28 @@ export default function Room() {
    * Stored as a plain object (not Map) so React's === diffing works with useMemo.
    */
   const [remoteCursorData, setRemoteCursorData] = useState<Record<string, RawCursorData>>({});
+
+  // ─── Sandboxed Execution State ──────────────────────────────
+  const [isExecuting, setIsExecuting] = useState(false);
+  const [cooldown, setCooldown] = useState(0);
+  const [execResult, setExecResult] = useState<ExecutionResult | null>(null);
+  const [isOutputOpen, setIsOutputOpen] = useState(false);
+  const [toasts, setToasts] = useState<{ id: string; message: string }[]>([]);
+
+  const clientTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Cooldown countdown timer
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const timer = setTimeout(() => setCooldown(cooldown - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [cooldown]);
+
+  useEffect(() => {
+    return () => {
+      if (clientTimeoutRef.current) clearTimeout(clientTimeoutRef.current);
+    };
+  }, []);
 
   // ─── Stable refs ─────────────────────────────────────────────
 
@@ -210,6 +246,40 @@ export default function Room() {
       setActiveFile(payload.fileName);
     };
 
+    const onRunResult = (result: ExecutionResult) => {
+      if (clientTimeoutRef.current) {
+        clearTimeout(clientTimeoutRef.current);
+        clientTimeoutRef.current = null;
+      }
+      setIsExecuting(false);
+      setExecResult(result);
+      setIsOutputOpen(true);
+    };
+
+    const onRunNotification = (payload: { userName: string; fileName: string }) => {
+      const id = Math.random().toString(36).substring(2);
+      const message = `⚡ ${payload.userName} ran ${payload.fileName}`;
+      setToasts((prev) => [...prev, { id, message }]);
+      setTimeout(() => {
+        setToasts((prev) => prev.filter((t) => t.id !== id));
+      }, 3000);
+    };
+
+    const onError = (msg: string) => {
+      if (clientTimeoutRef.current) {
+        clearTimeout(clientTimeoutRef.current);
+        clientTimeoutRef.current = null;
+      }
+      setIsExecuting(false);
+      
+      const id = Math.random().toString(36).substring(2);
+      const message = `❌ Error: ${msg}`;
+      setToasts((prev) => [...prev, { id, message }]);
+      setTimeout(() => {
+        setToasts((prev) => prev.filter((t) => t.id !== id));
+      }, 5000);
+    };
+
     socket.on('connect', onConnect);
     socket.on('disconnect', onDisconnect);
     socket.on('room-state', onRoomState);
@@ -223,6 +293,9 @@ export default function Room() {
     socket.on('file-deleted', onFileDeleted);
     socket.on('file-renamed', onFileRenamed);
     socket.on('file-switched', onFileSwitched);
+    socket.on('run-result', onRunResult);
+    socket.on('run-notification', onRunNotification);
+    socket.on('error', onError);
 
     if (socket.connected) onConnect();
 
@@ -240,9 +313,40 @@ export default function Room() {
       socket.off('file-deleted', onFileDeleted);
       socket.off('file-renamed', onFileRenamed);
       socket.off('file-switched', onFileSwitched);
+      socket.off('run-result', onRunResult);
+      socket.off('run-notification', onRunNotification);
+      socket.off('error', onError);
       disconnectSocket();
     };
   }, [roomId, userName, myColor, navigate]);
+
+  // ─── Code Execution ───────────────────────────────────────────
+
+  const activeFileExt = activeFile.split('.').pop()?.toLowerCase() ?? '';
+  const isExecutable = activeFileExt in extensionToLanguageMap;
+
+  const handleRun = useCallback(() => {
+    if (isExecuting || cooldown > 0 || !activeFile) return;
+
+    const ext = activeFile.split('.').pop()?.toLowerCase() ?? '';
+    const mappedLang = extensionToLanguageMap[ext];
+    if (!mappedLang) return;
+
+    const codeSnapshot = files[activeFile] ?? '';
+    setIsExecuting(true);
+    setCooldown(5);
+
+    if (clientTimeoutRef.current) clearTimeout(clientTimeoutRef.current);
+    clientTimeoutRef.current = setTimeout(() => {
+      setIsExecuting(false);
+    }, 12000); // 12 seconds safety fallback
+
+    getSocket().emit('run-code', {
+      fileName: activeFile,
+      code: codeSnapshot,
+      language: mappedLang,
+    });
+  }, [activeFile, files, isExecuting, cooldown]);
 
   // ─── Local editor changes ─────────────────────────────────────
 
@@ -421,6 +525,10 @@ export default function Room() {
               roomId={roomId}
               activeFile={activeFile}
               remoteCursorCount={remoteCursorCount}
+              onRun={handleRun}
+              isExecuting={isExecuting}
+              cooldown={cooldown}
+              isExecutable={isExecutable}
             />
           )}
 
@@ -449,6 +557,16 @@ export default function Room() {
             )}
           </div>
 
+          <OutputPanel
+            result={execResult}
+            isOpen={isOutputOpen}
+            onToggle={() => setIsOutputOpen((v) => !v)}
+            onClear={() => {
+              setExecResult(null);
+              setIsOutputOpen(false);
+            }}
+          />
+
           <ActivityLog
             entries={activityLog}
             isOpen={isLogOpen}
@@ -456,6 +574,15 @@ export default function Room() {
           />
         </main>
 
+      </div>
+
+      {/* Toast container in top-right */}
+      <div className="toast-container">
+        {toasts.map((t) => (
+          <div key={t.id} className="toast">
+            {t.message}
+          </div>
+        ))}
       </div>
     </div>
   );
