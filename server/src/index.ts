@@ -416,7 +416,7 @@ io.on('connection', (socket) => {
     const startTime = Date.now();
 
     try {
-      const response = await fetch('https://api.onlinecompiler.io/api/run-code/', {
+      const response = await fetch('https://api.onlinecompiler.io/api/run-code-sync/', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
