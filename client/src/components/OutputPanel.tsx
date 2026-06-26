@@ -34,11 +34,18 @@ export default function OutputPanel({ result, isOpen, onToggle, onClear }: Outpu
   return (
     <div className={`output-panel ${isOpen ? 'output-open' : 'output-closed'}`} aria-label="Output console">
       {/* Header bar — always visible, acts as the toggle button */}
-      <button 
+      <div 
         className="output-header" 
         onClick={onToggle} 
         aria-expanded={isOpen}
-        type="button"
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onToggle();
+          }
+        }}
       >
         <span className="output-header-left">
           <span className="output-icon">💻</span>
@@ -47,6 +54,11 @@ export default function OutputPanel({ result, isOpen, onToggle, onClear }: Outpu
             <>
               <span className="output-header-file">{result.fileName}</span>
               <span className="output-header-lang">{result.language}</span>
+              {result.fileName.endsWith('.js') && result.language === 'typescript-deno' && (
+                <span className="output-header-note" style={{ color: 'var(--text-muted)', fontSize: '10px', marginLeft: '4px' }}>
+                  (running via Deno)
+                </span>
+              )}
             </>
           )}
         </span>
@@ -71,7 +83,7 @@ export default function OutputPanel({ result, isOpen, onToggle, onClear }: Outpu
           )}
           <span className={`output-chevron ${isOpen ? 'up' : 'down'}`}>›</span>
         </span>
-      </button>
+      </div>
 
       {/* Panel content area */}
       <div className="output-content" ref={contentRef}>

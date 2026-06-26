@@ -9,16 +9,17 @@ import TabBar from '../components/TabBar';
 import OutputPanel, { type ExecutionResult } from '../components/OutputPanel';
 
 const extensionToLanguageMap: Record<string, string> = {
-  js: 'javascript',
-  ts: 'typescript',
-  py: 'python',
-  html: 'html',
-  cpp: 'cpp',
-  c: 'c',
-  java: 'java',
-  go: 'go',
-  rb: 'ruby',
-  rs: 'rust',
+  py: 'python-3.14',
+  cpp: 'cpp-g++-15',
+  c: 'c-gcc-15',
+  java: 'java-openjdk-25',
+  cs: 'csharp-dotnet-9',
+  go: 'go-1.26',
+  rs: 'rust-1.93',
+  php: 'php-8.5',
+  rb: 'ruby-4.0',
+  ts: 'typescript-deno',
+  js: 'typescript-deno',
 };
 
 // ─── Types ────────────────────────────────────────────────────

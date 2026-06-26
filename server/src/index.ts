@@ -9,6 +9,11 @@ import crypto from 'crypto';
 
 dotenv.config();
 
+const ONLINECOMPILER_API_KEY = process.env.ONLINECOMPILER_API_KEY;
+if (!ONLINECOMPILER_API_KEY) {
+  console.warn('[Execution] WARNING: ONLINECOMPILER_API_KEY not set — code execution will fail');
+}
+
 const app = express();
 const httpServer = createServer(app);
 
@@ -85,79 +90,20 @@ const DB_SYNC_DEBOUNCE_MS = 3000;  // Debounce DB saves — don't hit DB on ever
 const EDIT_LOG_DEBOUNCE_MS = 2000; // One "edited" log entry per 2-second burst of keystrokes
 const ACTIVITY_BUFFER_SIZE = 100;  // Max entries kept in memory per room
 
-// ─── Piston API Cache & Fallback ────────────────────────────────
-interface PistonRuntime {
-  language: string;
-  version: string;
-  aliases: string[];
-}
-
-const DEFAULT_VERSIONS: Record<string, string> = {
-  javascript: '18.15.0',
-  typescript: '5.0.3',
-  python: '3.10.0',
-  html: '1.0.0',
-  cpp: '10.2.0',
-  c: '10.2.0',
-  java: '15.0.2',
-  go: '1.16.2',
-  ruby: '3.0.1',
-  rust: '1.68.2',
+// ─── OnlineCompiler.io Mapping ──────────────────────────────────
+const LANGUAGE_COMPILER_MAP: Record<string, string> = {
+  py: 'python-3.14',
+  cpp: 'cpp-g++-15',
+  c: 'c-gcc-15',
+  java: 'java-openjdk-25',
+  cs: 'csharp-dotnet-9',
+  go: 'go-1.26',
+  rs: 'rust-1.93',
+  php: 'php-8.5',
+  rb: 'ruby-4.0',
+  ts: 'typescript-deno',
+  js: 'typescript-deno',
 };
-
-const pistonVersions = new Map<string, string>();
-
-async function fetchPistonRuntimes(): Promise<void> {
-  try {
-    const res = await fetch('https://emkc.org/api/v2/piston/runtimes');
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = (await res.json()) as PistonRuntime[];
-    
-    pistonVersions.clear();
-
-    const tempMap = new Map<string, string[]>();
-    for (const r of data) {
-      const lang = r.language.toLowerCase();
-      if (!tempMap.has(lang)) tempMap.set(lang, []);
-      tempMap.get(lang)!.push(r.version);
-      
-      for (const alias of r.aliases) {
-        const a = alias.toLowerCase();
-        if (!tempMap.has(a)) tempMap.set(a, []);
-        tempMap.get(a)!.push(r.version);
-      }
-    }
-
-    const compareVersions = (a: string, b: string) => {
-      const pa = a.split('.').map(Number);
-      const pb = b.split('.').map(Number);
-      for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-        const na = pa[i] || 0;
-        const nb = pb[i] || 0;
-        if (na !== nb) return nb - na;
-      }
-      return 0;
-    };
-
-    for (const [lang, versions] of tempMap.entries()) {
-      versions.sort(compareVersions);
-      pistonVersions.set(lang, versions[0]);
-    }
-
-    console.log('[Piston] Runtimes cache updated successfully:');
-    console.log(Array.from(pistonVersions.entries()).map(([k, v]) => `${k}@${v}`).join(', '));
-  } catch (err) {
-    console.warn('[Piston] Failed to fetch runtimes. Using fallback versions.', (err as Error).message);
-    pistonVersions.clear();
-    for (const [lang, ver] of Object.entries(DEFAULT_VERSIONS)) {
-      pistonVersions.set(lang, ver);
-    }
-  }
-}
-
-// Initialize cache and refresh every 24 hours
-fetchPistonRuntimes();
-setInterval(fetchPistonRuntimes, 24 * 60 * 60 * 1000);
 
 // ─── In-memory rooms ──────────────────────────────────────────
 
@@ -435,7 +381,7 @@ io.on('connection', (socket) => {
     const room = rooms.get(currentRoomId);
     if (!room) return;
 
-    const { fileName, code, language } = payload;
+    const { fileName, code } = payload;
 
     // 1. Validation
     if (!room.files.has(fileName)) {
@@ -453,31 +399,33 @@ io.on('connection', (socket) => {
       return;
     }
 
-    const normalizedLang = language.toLowerCase();
-    const allowedLanguages = ['javascript', 'typescript', 'python', 'html', 'cpp', 'c', 'java', 'go', 'ruby', 'rust'];
-    if (!allowedLanguages.includes(normalizedLang)) {
+    const ext = fileName.split('.').pop()?.toLowerCase() ?? '';
+    const compiler = LANGUAGE_COMPILER_MAP[ext];
+    if (!compiler) {
       socket.emit('error', 'Language not allowed or supported.');
       return;
     }
 
-    const version = pistonVersions.get(normalizedLang) || DEFAULT_VERSIONS[normalizedLang] || 'latest';
+    if (!ONLINECOMPILER_API_KEY) {
+      socket.emit('error', 'Code execution is currently unavailable (API key not configured).');
+      return;
+    }
+
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10000);
     const startTime = Date.now();
 
     try {
-      const response = await fetch('https://emkc.org/api/v2/piston/execute', {
+      const response = await fetch('https://api.onlinecompiler.io/api/run-code/', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': ONLINECOMPILER_API_KEY,
+        },
         body: JSON.stringify({
-          language: normalizedLang,
-          version: version,
-          files: [
-            {
-              name: fileName,
-              content: code,
-            },
-          ],
+          compiler,
+          code,
+          input: '',
         }),
         signal: controller.signal,
       });
@@ -486,19 +434,26 @@ io.on('connection', (socket) => {
       const executionTime = Date.now() - startTime;
 
       if (!response.ok) {
-        throw new Error(`Piston API returned status ${response.status}`);
+        let errMsg = `API returned status ${response.status}`;
+        try {
+          const errData = await response.json() as any;
+          if (errData && errData.error) {
+            errMsg = errData.error;
+          }
+        } catch (_) {}
+        throw new Error(errMsg);
       }
 
       const resData = (await response.json()) as any;
-      const stdout = resData.run?.stdout ?? '';
-      const stderr = resData.run?.stderr ?? '';
-      const exitCode = typeof resData.run?.code === 'number' ? resData.run.code : (resData.run?.signal ? -1 : 0);
+      const stdout = resData.output ?? '';
+      const stderr = resData.error ?? '';
+      const exitCode = typeof resData.exit_code === 'number' ? resData.exit_code : 0;
 
       socket.emit('run-result', {
         stdout,
         stderr,
         exitCode,
-        language: normalizedLang,
+        language: compiler,
         fileName,
         executionTime,
       });
@@ -520,7 +475,7 @@ io.on('connection', (socket) => {
         stdout: '',
         stderr: errMsg,
         exitCode: -1,
-        language: normalizedLang,
+        language: compiler,
         fileName,
         executionTime,
       });
